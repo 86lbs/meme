@@ -3,7 +3,7 @@ name: Meme API Monitor
 on:
   schedule:
     # 每 30 分钟检测一次
-    - cron: '*/30 * * * *'
+    - cron: '0 */12 * * *'
   workflow_dispatch: # 允许手动触发
 
 permissions:
