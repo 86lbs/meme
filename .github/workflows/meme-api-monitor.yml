@@ -1,0 +1,170 @@
+name: Meme API Monitor
+
+on:
+  schedule:
+    # 每 30 分钟检测一次
+    - cron: '*/30 * * * *'
+  workflow_dispatch: # 允许手动触发
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Health Check & Update README
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          API_URL: "https://liubs1135gg-meme-api.hf.space"
+        run: |
+          set -euo pipefail
+
+          STATUS_FILE=".api-status.json"
+          README_FILE="README.md"
+          NOW=$(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S CST')
+
+          # ── 初始化状态文件 ──
+          if [ ! -f "$STATUS_FILE" ]; then
+            echo '{"consecutive_failures": 0, "last_status": "unknown", "last_check": ""}' > "$STATUS_FILE"
+          fi
+
+          PREV_FAILURES=$(jq -r '.consecutive_failures' "$STATUS_FILE")
+
+          # ── 请求 API ──
+          echo "🔍 正在检测 ${API_URL}/memes/keys ..."
+          HTTP_CODE=0
+          RESPONSE=""
+
+          HTTP_CODE=$(curl -s -o /tmp/api_response.txt -w "%{http_code}" \
+            --connect-timeout 15 --max-time 30 \
+            "${API_URL}/memes/keys" 2>/dev/null) || HTTP_CODE=0
+
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            # 额外验证：响应必须是 JSON 数组
+            if jq -e 'type == "array"' /tmp/api_response.txt > /dev/null 2>&1; then
+              MEME_COUNT=$(jq 'length' /tmp/api_response.txt)
+              API_OK=true
+              echo "✅ API 正常 | HTTP ${HTTP_CODE} | ${MEME_COUNT} 个 meme"
+            else
+              API_OK=false
+              echo "❌ API 响应格式异常"
+            fi
+          else
+            API_OK=false
+            echo "❌ API 异常 | HTTP ${HTTP_CODE}"
+          fi
+
+          # ── 更新连续失败计数 ──
+          if [ "$API_OK" = true ]; then
+            CONSECUTIVE_FAILURES=0
+            LAST_STATUS="healthy"
+            STATUS_EMOJI="✅"
+            STATUS_TEXT="Meme API 运行正常"
+            DETAIL_TEXT="HTTP ${HTTP_CODE} · 共 ${MEME_COUNT} 个 meme · 检测于 ${NOW}"
+          else
+            CONSECUTIVE_FAILURES=$((PREV_FAILURES + 1))
+            LAST_STATUS="unhealthy"
+            STATUS_EMOJI="❌"
+            STATUS_TEXT="Meme API 异常"
+            DETAIL_TEXT="HTTP ${HTTP_CODE} · 连续失败 ${CONSECUTIVE_FAILURES} 次 · 检测于 ${NOW}"
+          fi
+
+          # ── 保存状态 ──
+          jq -n \
+            --arg cf "$CONSECUTIVE_FAILURES" \
+            --arg ls "$LAST_STATUS" \
+            --arg lc "$NOW" \
+            '{consecutive_failures: ($cf|tonumber), last_status: $ls, last_check: $lc}' \
+            > "$STATUS_FILE"
+
+          # ── 更新 README ──
+          # 状态徽标区域用特殊注释标记
+          STATUS_BLOCK=$(cat <<EOF
+          <!-- API_STATUS_START -->
+          > ${STATUS_EMOJI} **${STATUS_TEXT}**
+          >
+          > ${DETAIL_TEXT}
+          <!-- API_STATUS_END -->
+          EOF
+          )
+
+          if grep -q "API_STATUS_START" "$README_FILE" 2>/dev/null; then
+            # 替换已有的状态块
+            python3 - "$README_FILE" "$STATUS_BLOCK" <<'PYEOF'
+          import sys, re
+          readme_path = sys.argv[1]
+          new_block = sys.argv[2]
+          with open(readme_path, 'r', encoding='utf-8') as f:
+              content = f.read()
+          pattern = r'<!-- API_STATUS_START -->.*?<!-- API_STATUS_END -->'
+          content = re.sub(pattern, new_block.strip(), content, flags=re.DOTALL)
+          with open(readme_path, 'w', encoding='utf-8') as f:
+              f.write(content)
+          PYEOF
+          else
+            # 在 README 顶部插入状态块
+            TEMP_FILE=$(mktemp)
+            echo "$STATUS_BLOCK" > "$TEMP_FILE"
+            echo "" >> "$TEMP_FILE"
+            if [ -f "$README_FILE" ]; then
+              cat "$README_FILE" >> "$TEMP_FILE"
+            fi
+            mv "$TEMP_FILE" "$README_FILE"
+          fi
+
+          # ── 提交变更 ──
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$STATUS_FILE" "$README_FILE"
+
+          if git diff --cached --quiet; then
+            echo "📌 无变更，跳过提交"
+          else
+            git commit -m "🤖 API 状态更新: ${STATUS_EMOJI} ${NOW}"
+            git push
+          fi
+
+          # ── 连续 3 次失败 → 禁用 workflow ──
+          if [ "$CONSECUTIVE_FAILURES" -ge 3 ]; then
+            echo "🚨 连续失败 ${CONSECUTIVE_FAILURES} 次，正在禁用 workflow..."
+
+            # 获取 workflow ID
+            WORKFLOW_ID=$(gh api "/repos/${REPO}/actions/workflows" \
+              --jq '.workflows[] | select(.name == "Meme API Monitor") | .id')
+
+            if [ -n "$WORKFLOW_ID" ]; then
+              gh api -X PUT "/repos/${REPO}/actions/workflows/${WORKFLOW_ID}/disable"
+              echo "⛔ Workflow 已禁用"
+
+              # 创建 Issue 通知
+              gh issue create \
+                --title "🚨 Meme API 连续 ${CONSECUTIVE_FAILURES} 次检测失败，监控已暂停" \
+                --body "## 详情
+
+          - **最后检测时间**: ${NOW}
+          - **连续失败次数**: ${CONSECUTIVE_FAILURES}
+          - **API 地址**: ${API_URL}
+          - **HTTP 状态码**: ${HTTP_CODE}
+
+          ## 处理方式
+
+          1. 检查 API 服务是否正常
+          2. 确认后手动重新启用 workflow:
+             \`\`\`
+             gh workflow enable meme-api-monitor.yml
+             \`\`\`
+          3. 或在仓库 **Actions** 页面手动启用
+
+          ---
+          *此 Issue 由监控 Action 自动创建*" \
+                --label "bug,automated"
+            fi
+
+            exit 1
+          fi
