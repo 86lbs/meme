@@ -6,4 +6,4 @@
 
 # 完全白嫖的meme api解决方案
 
-86lbs.github.io/meme
+http://86lbs.github.io/meme
