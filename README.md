@@ -1,7 +1,7 @@
 <!-- API_STATUS_START -->
-> ✅ **Meme API 运行正常**
+> ❌ **Meme API 异常**
 >
-> HTTP 200 · 共 295 个 meme · 检测于 2026-04-18 19:09:47 CST
+> HTTP 502 · 连续失败 1 次 · 检测于 2026-04-23 22:40:00 CST
 <!-- API_STATUS_END -->
 
 # 完全白嫖的meme api解决方案
