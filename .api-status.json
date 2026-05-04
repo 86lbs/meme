@@ -1,5 +1,5 @@
 {
-  "consecutive_failures": 0,
-  "last_status": "healthy",
-  "last_check": "2026-05-01 10:31:20 CST"
+  "consecutive_failures": 1,
+  "last_status": "unhealthy",
+  "last_check": "2026-05-04 10:12:57 CST"
 }
