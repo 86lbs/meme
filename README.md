@@ -1,7 +1,7 @@
 <!-- API_STATUS_START -->
 > ❌ **Meme API 异常**
 >
-> HTTP 502 · 连续失败 1 次 · 检测于 2026-05-13 10:34:58 CST
+> HTTP 0 · 连续失败 2 次 · 检测于 2026-05-16 10:26:02 CST
 <!-- API_STATUS_END -->
 
 # 完全白嫖的meme api解决方案
